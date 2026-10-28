@@ -1,6 +1,6 @@
 # Prism Implementation Guide
 
-This guide gives you a practical path through the capstone. It does not add new requirements. The source of truth for scope is `PRISM_PROBLEM_STATEMENT.md`.
+This guide gives you a practical path through the capstone. It does not add new requirements. The source of truth for scope is `problem-statement.md`.
 
 ## Must Have Checklist
 
