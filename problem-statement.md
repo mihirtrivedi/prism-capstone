@@ -197,7 +197,7 @@ You may plan your own schedule, but this staging keeps scope manageable:
 
 The Must Have section above defines the minimum viable submission.
 
-For a more detailed build path and FAQ, see `docs/IMPLEMENTATION_GUIDE.md`.
+For a more detailed build path and FAQ, see `docs/implementation-guide.md`.
 
 ## Provided Starter Dataset
 

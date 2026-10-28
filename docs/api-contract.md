@@ -146,7 +146,7 @@ The totals here must reconcile with the sum of `x-prism-cost-usd` headers — th
 Expected behavior:
 
 - Return recent request log entries, newest first, filterable by key.
-- Each entry carries the fields listed in `docs/DATA_MODEL.md` (Request Log Entry).
+- Each entry carries the fields listed in `docs/data-model.md` (Request Log Entry).
 
 ### 6. Cache Stats
 
