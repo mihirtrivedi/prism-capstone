@@ -8,7 +8,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Prism Gateway - Ops console</title>
+    <title>Prism: LLM Gateway & Semantic Cache</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='p' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%230284c7'/%3E%3Cstop offset='50%25' stop-color='%236366f1'/%3E%3Cstop offset='100%25' stop-color='%23f43f5e'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpolygon points='16,3 30,27 2,27' fill='%23ffffff' stroke='url(%23p)' stroke-width='2.5' stroke-linejoin='round'/%3E%3Cline x1='16' y1='3' x2='22' y2='27' stroke='%230284c7' stroke-width='1.5' opacity='0.9'/%3E%3Cline x1='16' y1='3' x2='10' y2='27' stroke='%23f43f5e' stroke-width='1.5' opacity='0.9'/%3E%3C/svg%3E">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -901,7 +901,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
     <!-- Header & Brand Section (Sentence Case) -->
     <header>
         <div class="header-brand">
-            <div class="brand-logo" onclick="handleLogoClick()" title="Prism Gateway core (click to refresh)">
+            <div class="brand-logo" onclick="handleLogoClick()" title="Prism: LLM Gateway & Semantic Cache (click to refresh)">
                 <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <defs>
                         <linearGradient id="prismGrad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -917,8 +917,8 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                 </svg>
             </div>
             <div class="brand-title">
-                <h1>Prism Gateway</h1>
-                <p class="brand-subtitle">Unified LLM infrastructure, Hot-path smart routing & Semantic caching</p>
+                <h1>Prism: LLM Gateway & Semantic Cache</h1>
+                <p class="brand-subtitle">Unlock intelligent LLM gateway management</p>
             </div>
         </div>
         <div class="header-actions">
@@ -1152,7 +1152,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
            Icon Click Behaviors (Interactive Like Buttons)
         ------------------------------------------------------------------------- */
         function handleLogoClick() {
-            showToast("Prism Gateway core: Connected & operational");
+            showToast("Prism: LLM Gateway & Semantic Cache: Connected & operational");
             fetchData();
         }
 
