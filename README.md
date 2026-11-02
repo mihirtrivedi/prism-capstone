@@ -14,7 +14,7 @@ The gateway sits in the hot path between applications and upstream model provide
 
 ## Documentation & Specifications
 
-* 📋 **[problem-statement.md](problem-statement.md)**: Capstone requirements, 9 Must-Have features, grading criteria, and deliverables.
+* 📋 **[docs/problem-statement.md](docs/problem-statement.md)**: Capstone requirements, 9 Must-Have features, grading criteria, and deliverables.
 * 🔌 **[docs/api-contract.md](docs/api-contract.md)**: API schema, OpenAI payload structure, header contracts, and error responses.
 * 🗄️ **[docs/data-model.md](docs/data-model.md)**: Schemas, persistence entities, usage records, and cache models.
 * 📊 **[docs/evaluation-guide.md](docs/evaluation-guide.md)**: Smoke test, concurrency load test, and routing evaluation guidelines.
