@@ -4,6 +4,8 @@ streaming, rate limiting, budget enforcement, semantic caching, quality escalati
 """
 
 import json
+import logging
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -21,6 +23,9 @@ from prism.router import resolve_model
 from prism.semantic_cache import extract_prompt_from_messages, semantic_cache
 from prism.providers import provider_client
 from prism.console import HTML_DASHBOARD
+
+logger = logging.getLogger("prism.api")
+ADMIN_KEY_ENV = os.getenv("PRISM_ADMIN_KEY")
 
 
 @asynccontextmanager
@@ -40,10 +45,19 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def check_admin_auth(x_admin_key: Optional[str] = None):
+    """Enforces admin authentication when PRISM_ADMIN_KEY is configured in the environment."""
+    if ADMIN_KEY_ENV and x_admin_key != ADMIN_KEY_ENV:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"message": "Unauthorized admin access", "type": "authentication_error", "code": "unauthorized"}}
+        )
 
 
 @app.get("/health")
@@ -108,23 +122,56 @@ async def providers_health():
 
 
 @app.post("/admin/keys")
-async def create_key(request: Request):
-    """Creates or updates a tenant virtual key."""
+async def create_key(request: Request, x_admin_key: Optional[str] = Header(None)):
+    """Creates or updates a tenant virtual key with strict schema & range validation."""
+    check_admin_auth(x_admin_key)
     try:
         body = await request.json()
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
+        raise HTTPException(status_code=400, detail={"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}})
 
-    team = body.get("team", "default")
-    key_val = body.get("virtual_key") or f"prism-sk-{team}-{uuid.uuid4().hex[:6]}"
-    budget = float(body.get("monthly_budget_usd", 50.0))
+    team = str(body.get("team", "default")).strip()
+    key_val = str(body.get("virtual_key") or f"prism-sk-{team}-{uuid.uuid4().hex[:6]}").strip()
+
+    try:
+        budget = float(body.get("monthly_budget_usd", 50.0))
+        if budget < 0.0:
+            raise ValueError("monthly_budget_usd must be non-negative")
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"message": "Invalid monthly_budget_usd; must be a non-negative number", "type": "invalid_request_error"}}
+        )
+
     rate_lim = body.get("rate_limit", {})
-    rpm = int(rate_lim.get("requests_per_minute", 60))
-    tpm = int(rate_lim.get("tokens_per_minute", 100000))
+    try:
+        rpm = int(rate_lim.get("requests_per_minute", 60))
+        if rpm <= 0:
+            raise ValueError("requests_per_minute must be greater than zero")
+        tpm = int(rate_lim.get("tokens_per_minute", 100000))
+        if tpm <= 0:
+            raise ValueError("tokens_per_minute must be greater than zero")
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"message": "Invalid rate_limit values; must be positive integers", "type": "invalid_request_error"}}
+        )
+
     allowlist = body.get("model_allowlist", ["fast", "smart", "auto"])
+    if not isinstance(allowlist, list):
+        allowlist = ["fast", "smart", "auto"]
+
     cache_cfg = body.get("semantic_cache", {})
     cache_enabled = 1 if cache_cfg.get("enabled", True) else 0
-    sim_thresh = float(cache_cfg.get("similarity_threshold", 0.85))
+    try:
+        sim_thresh = float(cache_cfg.get("similarity_threshold", 0.85))
+        if not (0.0 <= sim_thresh <= 1.0):
+            raise ValueError("similarity_threshold must be between 0.0 and 1.0")
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"message": "Invalid similarity_threshold; must be between 0.0 and 1.0", "type": "invalid_request_error"}}
+        )
 
     now_str = datetime.now(timezone.utc).isoformat()
     with db._lock:
@@ -235,8 +282,14 @@ async def chat_completions(
     is_allowed = False
     if requested_model in tenant["model_allowlist"]:
         is_allowed = True
-    elif requested_model in config.model_pricing and any(a in tenant["model_allowlist"] for a in ["fast", "smart"]):
-        is_allowed = True
+    elif requested_model in config.model_pricing:
+        # Verify that concrete model belongs to a permitted tier in tenant's allowlist
+        for alias, mapping in config.aliases.items():
+            if alias in tenant["model_allowlist"]:
+                allowed_chain = [mapping.get("primary")] + list(mapping.get("fallbacks", []))
+                if requested_model in allowed_chain:
+                    is_allowed = True
+                    break
 
     if not is_allowed:
         db.log_request(
@@ -254,6 +307,7 @@ async def chat_completions(
         )
 
     # 5. Rate Limit Check (Race-Safe Sliding Window)
+    rate_limiter.cleanup_idle_keys()
     rpm_limit = tenant["requests_per_minute"]
     if not rate_limiter.check_and_acquire(virtual_key, rpm_limit):
         db.log_request(
@@ -327,30 +381,31 @@ async def chat_completions(
             stream_gen, provider_name, resolved_model, is_fallback, tracker = await provider_client.execute_streaming_chat(chain, body)
 
             async def event_generator():
-                async for chunk in stream_gen:
-                    yield chunk
-
-                # When stream completes, meter usage and log telemetry
-                latency_ms = round((time.monotonic() - start_time) * 1000)
-                p_toks = tracker["prompt_tokens"]
-                c_toks = tracker["completion_tokens"]
-                cost = calculate_cost(resolved_model, p_toks, c_toks)
-                db.record_usage(virtual_key, p_toks, c_toks, cost, is_cache_hit=False)
-                db.log_request(
-                    request_id=req_id,
-                    virtual_key=virtual_key,
-                    requested_model=requested_model,
-                    resolved_provider=provider_name,
-                    resolved_model=resolved_model,
-                    status="ok",
-                    prompt_tokens=p_toks,
-                    completion_tokens=c_toks,
-                    cost_usd=cost,
-                    cache_result="miss",
-                    fallback=is_fallback,
-                    route_reason=route_reason,
-                    latency_ms=latency_ms
-                )
+                try:
+                    async for chunk in stream_gen:
+                        yield chunk
+                finally:
+                    # Meter usage and log telemetry regardless of clean finish or client disconnection
+                    latency_ms = round((time.monotonic() - start_time) * 1000)
+                    p_toks = tracker.get("prompt_tokens", 0)
+                    c_toks = tracker.get("completion_tokens", 0)
+                    cost = calculate_cost(resolved_model, p_toks, c_toks)
+                    db.record_usage(virtual_key, p_toks, c_toks, cost, is_cache_hit=False)
+                    db.log_request(
+                        request_id=req_id,
+                        virtual_key=virtual_key,
+                        requested_model=requested_model,
+                        resolved_provider=provider_name,
+                        resolved_model=resolved_model,
+                        status="ok" if tracker.get("completed") else "client_aborted",
+                        prompt_tokens=p_toks,
+                        completion_tokens=c_toks,
+                        cost_usd=cost,
+                        cache_result="miss",
+                        fallback=is_fallback,
+                        route_reason=route_reason,
+                        latency_ms=latency_ms
+                    )
 
             headers = {
                 "x-prism-provider": f"{provider_name}/{resolved_model}",
@@ -360,6 +415,7 @@ async def chat_completions(
             return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
 
         except Exception as exc:
+            logger.error("Upstream streaming error on request %s: %s", req_id, exc)
             db.log_request(
                 request_id=req_id,
                 virtual_key=virtual_key,
@@ -415,6 +471,7 @@ async def chat_completions(
             return JSONResponse(status_code=200, content=resp_payload, headers=headers)
 
         except Exception as exc:
+            logger.error("Upstream streaming error on request %s: %s", req_id, exc)
             db.log_request(
                 request_id=req_id,
                 virtual_key=virtual_key,

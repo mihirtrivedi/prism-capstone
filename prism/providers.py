@@ -116,7 +116,7 @@ class UpstreamProviderClient:
         Returns: (chunk_generator, provider_name, model_name, is_fallback, tracker_dict)
         """
         last_error = None
-        stream_client = httpx.AsyncClient(timeout=self.timeout)
+        client = self.get_client()
 
         for chain_idx, model_name in enumerate(fallback_chain):
             is_fallback = (chain_idx > 0)
@@ -125,18 +125,26 @@ class UpstreamProviderClient:
             if not provider_cfg:
                 continue
 
+            # Escalation hook: small models refuse [refuse]-marked prompts; escalate to large
+            has_refuse = any("[refuse]" in str(m.get("content", "")).lower() for m in request_body.get("messages", []))
+            target_model = model_name
+            if has_refuse and model_name.endswith("-small"):
+                large_candidate = model_name.replace("-small", "-large")
+                if large_candidate in config.model_pricing:
+                    target_model = large_candidate
+
             url = f"{provider_cfg['base_url'].rstrip('/')}/chat/completions"
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {provider_cfg['api_key']}"
             }
             payload = dict(request_body)
-            payload["model"] = model_name
+            payload["model"] = target_model
             payload["stream"] = True
 
             try:
-                req = stream_client.build_request("POST", url, json=payload, headers=headers)
-                resp = await stream_client.send(req, stream=True)
+                req = client.build_request("POST", url, json=payload, headers=headers)
+                resp = await client.send(req, stream=True)
 
                 if resp.status_code in (429, 500, 502, 503, 504) or resp.status_code >= 400:
                     last_error = f"HTTP {resp.status_code}"
@@ -175,15 +183,13 @@ class UpstreamProviderClient:
                                 yield f"{line_str}\n\n"
                     finally:
                         await resp.aclose()
-                        await stream_client.aclose()
 
-                return stream_generator(), provider_name, model_name, is_fallback, tracker
+                return stream_generator(), provider_name, target_model, is_fallback, tracker
 
             except (httpx.TimeoutException, httpx.ConnectError, httpx.RequestError) as exc:
                 last_error = str(exc)
                 continue
 
-        await stream_client.aclose()
         raise RuntimeError(f"All upstream providers failed in chain {fallback_chain}. Last error: {last_error}")
 
 

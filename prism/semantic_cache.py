@@ -3,6 +3,7 @@ Uses token/concept vectorization with cosine similarity and fast-path exact matc
 Preserves session salts for run isolation per the evaluation specification.
 """
 
+import hashlib
 import json
 import math
 import re
@@ -37,20 +38,36 @@ STOPWORDS = frozenset({
 })
 
 SALT_REGEX = re.compile(r"^\(([a-f0-9]{6,12})\)\s*", re.IGNORECASE)
+CTX_REGEX = re.compile(r"^\[ctx:([a-f0-9]{8,16})\]\s*", re.IGNORECASE)
 WORDS_REGEX = re.compile(r"\b[a-z0-9_]+\b")
 
 
 def clean_prompt_text(text: str) -> str:
-    """Strips leading salt like '(a1b2c3d4) ' if needed."""
-    return SALT_REGEX.sub("", text).strip()
+    """Strips leading salt like '(a1b2c3d4) ' or context '[ctx:1a2b3c4d] ' if needed."""
+    s = CTX_REGEX.sub("", text)
+    return SALT_REGEX.sub("", s).strip()
 
 
 def extract_prompt_from_messages(messages: List[Dict[str, Any]]) -> str:
-    """Extracts the latest user message content to use as the cache query."""
+    """Extracts the prompt to use as the cache query.
+    For single-turn prompts, extracts the user text directly.
+    For multi-turn prompts, incorporates conversation history hash to guarantee context isolation.
+    """
+    if not messages:
+        return ""
+    last_user = ""
     for m in reversed(messages):
         if m.get("role") == "user":
-            return str(m.get("content", ""))
-    return ""
+            last_user = str(m.get("content", ""))
+            break
+
+    if len(messages) <= 1:
+        return last_user
+
+    # Multi-turn context hash:
+    history_tuples = tuple((m.get("role"), str(m.get("content", ""))) for m in messages[:-1])
+    ctx_hash = hashlib.sha256(json.dumps(history_tuples, sort_keys=True).encode("utf-8")).hexdigest()[:8]
+    return f"[ctx:{ctx_hash}] {last_user}"
 
 
 def vectorize(text: str) -> Dict[str, float]:
@@ -102,7 +119,7 @@ class SemanticCache:
         """
         with db.get_connection() as conn:
             cursor = conn.execute(
-                "SELECT prompt_text, prompt_vector, response_payload FROM cache_entries WHERE virtual_key = ?",
+                "SELECT prompt_text, prompt_vector, response_payload FROM cache_entries WHERE virtual_key = ? ORDER BY id DESC LIMIT 1000",
                 (virtual_key,)
             )
             rows = cursor.fetchall()
@@ -142,7 +159,7 @@ class SemanticCache:
         prompt_text: str,
         response_payload: Dict[str, Any]
     ):
-        """Stores a successful completion into the tenant's cache."""
+        """Stores a successful completion into the tenant's cache, with LRU bound of 1000 items."""
         query_vec = vectorize(prompt_text)
         now_str = datetime.now(timezone.utc).isoformat()
         with db._lock:
@@ -160,6 +177,16 @@ class SemanticCache:
                     json.dumps(response_payload),
                     now_str
                 ))
+                # Prune old cache entries exceeding 1000 per tenant
+                conn.execute("""
+                DELETE FROM cache_entries
+                WHERE virtual_key = ?
+                  AND id NOT IN (
+                      SELECT id FROM cache_entries
+                      WHERE virtual_key = ?
+                      ORDER BY id DESC LIMIT 1000
+                  )
+                """, (virtual_key, virtual_key))
                 conn.commit()
 
 
