@@ -17,6 +17,7 @@ class Database:
     def __init__(self, db_path: Path = DB_PATH):
         self.db_path = db_path
         self._lock = threading.Lock()
+        self._reserved_spend: Dict[str, float] = {}
         self.init_db()
         self.seed_tenants()
 
@@ -160,6 +161,33 @@ class Database:
             )
             row = cursor.fetchone()
             return float(row["spend_usd"]) if row else 0.0
+
+    def reserve_budget(self, virtual_key: str, amount_usd: float, monthly_budget: float) -> bool:
+        """Atomically checks committed spend + in-flight holds and reserves amount_usd.
+        Prevents TOCTOU concurrency race conditions where multiple requests over-spend simultaneously.
+        """
+        ym = self.get_current_year_month()
+        with self._lock:
+            with self.get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT spend_usd FROM usage_records WHERE virtual_key = ? AND year_month = ?",
+                    (virtual_key, ym)
+                )
+                row = cursor.fetchone()
+                current_spend = float(row["spend_usd"]) if row else 0.0
+
+            in_flight = self._reserved_spend.get(virtual_key, 0.0)
+            if round(current_spend + in_flight + amount_usd, 7) > round(monthly_budget, 7):
+                return False
+
+            self._reserved_spend[virtual_key] = in_flight + amount_usd
+            return True
+
+    def release_budget_reservation(self, virtual_key: str, amount_usd: float):
+        """Releases the in-flight budget hold once execution finishes or aborts."""
+        with self._lock:
+            current = self._reserved_spend.get(virtual_key, 0.0)
+            self._reserved_spend[virtual_key] = max(0.0, current - amount_usd)
 
     def record_usage(
         self,

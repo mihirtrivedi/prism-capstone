@@ -34,6 +34,22 @@ class TestCostCalculator(unittest.TestCase):
         cost = calculate_cost("nonexistent-model", 500, 500)
         self.assertEqual(cost, 0.0)
 
+    def test_reserve_budget_prevents_overspend(self):
+        from prism.database import db
+        key = "test-reserve-budget-key"
+        budget = 0.000030
+        # First 3 x 0.000010 fit in 0.000030
+        self.assertTrue(db.reserve_budget(key, 0.000010, budget))
+        self.assertTrue(db.reserve_budget(key, 0.000010, budget))
+        self.assertTrue(db.reserve_budget(key, 0.000010, budget))
+        # 4th must fail
+        self.assertFalse(db.reserve_budget(key, 0.000010, budget))
+        # Release hold
+        db.release_budget_reservation(key, 0.000010)
+        # Now one fits again
+        self.assertTrue(db.reserve_budget(key, 0.000010, budget))
+        db.release_budget_reservation(key, 0.000030)
+
 
 class TestRateLimiter(unittest.TestCase):
     def test_rate_limit_admit_and_reject(self):
@@ -63,6 +79,14 @@ class TestRateLimiter(unittest.TestCase):
         limiter._history["expired-key"] = [1.0]  # Timestamp > 60s ago
         limiter.cleanup_idle_keys()
         self.assertNotIn("expired-key", limiter._history)
+
+    def test_rate_limiter_tokens_per_minute(self):
+        limiter = SlidingWindowRateLimiter()
+        key = "test-tpm-key"
+        # 1000 RPM, but only 500 TPM
+        self.assertTrue(limiter.check_and_acquire(key, rpm_limit=1000, estimated_tokens=300, tpm_limit=500))
+        # 300 + 300 = 600 > 500 -> must reject
+        self.assertFalse(limiter.check_and_acquire(key, rpm_limit=1000, estimated_tokens=300, tpm_limit=500))
 
 
 class TestSemanticCache(unittest.TestCase):

@@ -306,10 +306,12 @@ async def chat_completions(
             content={"error": {"message": f"Model '{requested_model}' not allowed under this key's allowlist", "type": "model_not_allowed", "code": "model_not_allowed"}}
         )
 
-    # 5. Rate Limit Check (Race-Safe Sliding Window)
+    # 5. Rate Limit Check (Race-Safe Sliding Window for both RPM and TPM)
     rate_limiter.cleanup_idle_keys()
     rpm_limit = tenant["requests_per_minute"]
-    if not rate_limiter.check_and_acquire(virtual_key, rpm_limit):
+    tpm_limit = tenant.get("tokens_per_minute")
+    est_tokens = max(1, len(prompt_text) // 4) + 50
+    if not rate_limiter.check_and_acquire(virtual_key, rpm_limit, est_tokens, tpm_limit):
         db.log_request(
             request_id=req_id,
             virtual_key=virtual_key,
@@ -324,10 +326,10 @@ async def chat_completions(
             content={"error": {"message": f"Rate limit of {rpm_limit} requests/minute exceeded", "type": "rate_limit_exceeded", "code": "rate_limit_exceeded"}}
         )
 
-    # 6. Monthly Budget Enforcement
-    current_spend = db.get_monthly_spend(virtual_key)
+    # 6. Monthly Budget Enforcement with In-Flight Reservation Hold (Prevents TOCTOU Race)
     monthly_budget = tenant["monthly_budget_usd"]
-    if current_spend >= monthly_budget:
+    est_hold = 0.000010 if "smart" not in str(requested_model) else 0.000040
+    if not db.reserve_budget(virtual_key, est_hold, monthly_budget):
         db.log_request(
             request_id=req_id,
             virtual_key=virtual_key,
@@ -347,6 +349,7 @@ async def chat_completions(
         threshold = tenant.get("similarity_threshold", 0.85)
         is_hit, cached_response, _ = semantic_cache.check_cache(virtual_key, prompt_text, threshold)
         if is_hit and cached_response:
+            db.release_budget_reservation(virtual_key, est_hold)
             latency_ms = round((time.monotonic() - start_time) * 1000)
             db.record_usage(virtual_key, prompt_tokens=0, completion_tokens=0, cost_usd=0.0, is_cache_hit=True)
             db.log_request(
@@ -385,7 +388,8 @@ async def chat_completions(
                     async for chunk in stream_gen:
                         yield chunk
                 finally:
-                    # Meter usage and log telemetry regardless of clean finish or client disconnection
+                    # Release in-flight reservation and meter usage regardless of clean finish or abort
+                    db.release_budget_reservation(virtual_key, est_hold)
                     latency_ms = round((time.monotonic() - start_time) * 1000)
                     p_toks = tracker.get("prompt_tokens", 0)
                     c_toks = tracker.get("completion_tokens", 0)
@@ -415,6 +419,7 @@ async def chat_completions(
             return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
 
         except Exception as exc:
+            db.release_budget_reservation(virtual_key, est_hold)
             logger.error("Upstream streaming error on request %s: %s", req_id, exc)
             db.log_request(
                 request_id=req_id,
@@ -471,7 +476,7 @@ async def chat_completions(
             return JSONResponse(status_code=200, content=resp_payload, headers=headers)
 
         except Exception as exc:
-            logger.error("Upstream streaming error on request %s: %s", req_id, exc)
+            logger.error("Upstream execution error on request %s: %s", req_id, exc)
             db.log_request(
                 request_id=req_id,
                 virtual_key=virtual_key,
@@ -485,3 +490,5 @@ async def chat_completions(
                 status_code=502,
                 content={"error": {"message": f"Upstream error: {str(exc)}", "type": "upstream_error", "code": "upstream_error"}}
             )
+        finally:
+            db.release_budget_reservation(virtual_key, est_hold)

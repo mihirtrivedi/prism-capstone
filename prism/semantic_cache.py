@@ -164,29 +164,42 @@ class SemanticCache:
         now_str = datetime.now(timezone.utc).isoformat()
         with db._lock:
             with db.get_connection() as conn:
-                conn.execute("""
-                INSERT INTO cache_entries (
-                    virtual_key, model, prompt_text, prompt_vector,
-                    response_payload, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    virtual_key,
-                    model,
-                    prompt_text,
-                    json.dumps(query_vec),
-                    json.dumps(response_payload),
-                    now_str
-                ))
-                # Prune old cache entries exceeding 1000 per tenant
-                conn.execute("""
-                DELETE FROM cache_entries
-                WHERE virtual_key = ?
-                  AND id NOT IN (
-                      SELECT id FROM cache_entries
-                      WHERE virtual_key = ?
-                      ORDER BY id DESC LIMIT 1000
-                  )
-                """, (virtual_key, virtual_key))
+                # Deduplicate: if this exact prompt is already cached for this tenant, update it
+                cur = conn.execute(
+                    "SELECT id FROM cache_entries WHERE virtual_key = ? AND prompt_text = ?",
+                    (virtual_key, prompt_text)
+                )
+                existing = cur.fetchone()
+                if existing:
+                    conn.execute("""
+                    UPDATE cache_entries
+                    SET model = ?, prompt_vector = ?, response_payload = ?, created_at = ?
+                    WHERE id = ?
+                    """, (model, json.dumps(query_vec), json.dumps(response_payload), now_str, existing["id"]))
+                else:
+                    conn.execute("""
+                    INSERT INTO cache_entries (
+                        virtual_key, model, prompt_text, prompt_vector,
+                        response_payload, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        virtual_key,
+                        model,
+                        prompt_text,
+                        json.dumps(query_vec),
+                        json.dumps(response_payload),
+                        now_str
+                    ))
+                    # Prune old cache entries exceeding 1000 per tenant
+                    conn.execute("""
+                    DELETE FROM cache_entries
+                    WHERE virtual_key = ?
+                      AND id NOT IN (
+                          SELECT id FROM cache_entries
+                          WHERE virtual_key = ?
+                          ORDER BY id DESC LIMIT 1000
+                      )
+                    """, (virtual_key, virtual_key))
                 conn.commit()
 
 
