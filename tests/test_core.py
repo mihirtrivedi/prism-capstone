@@ -15,7 +15,7 @@ from prism.config import config
 from prism.cost_calculator import calculate_cost
 from prism.rate_limiter import SlidingWindowRateLimiter
 from prism.router import classify_prompt_difficulty, resolve_model
-from prism.semantic_cache import clean_prompt_text, cosine_similarity, vectorize
+from prism.semantic_cache import clean_prompt_text, cosine_similarity, extract_prompt_from_messages, vectorize
 
 
 class TestCostCalculator(unittest.TestCase):
@@ -58,6 +58,12 @@ class TestRateLimiter(unittest.TestCase):
         self.assertFalse(limiter.check_and_acquire("key-a", limit))
         self.assertTrue(limiter.check_and_acquire("key-b", limit))
 
+    def test_rate_limiter_idle_pruning(self):
+        limiter = SlidingWindowRateLimiter()
+        limiter._history["expired-key"] = [1.0]  # Timestamp > 60s ago
+        limiter.cleanup_idle_keys()
+        self.assertNotIn("expired-key", limiter._history)
+
 
 class TestSemanticCache(unittest.TestCase):
     def test_exact_paraphrase_similarity(self):
@@ -88,6 +94,21 @@ class TestSemanticCache(unittest.TestCase):
         raw = "(7f8a9b0c) Explain server sent events."
         clean = clean_prompt_text(raw)
         self.assertEqual(clean, "Explain server sent events.")
+
+    def test_multiturn_context_isolation(self):
+        c1 = [
+            {"role": "user", "content": "My pin is 1234."},
+            {"role": "assistant", "content": "Noted."},
+            {"role": "user", "content": "What is my pin?"}
+        ]
+        c2 = [
+            {"role": "user", "content": "My pin is 9999."},
+            {"role": "assistant", "content": "Noted."},
+            {"role": "user", "content": "What is my pin?"}
+        ]
+        key1 = extract_prompt_from_messages(c1)
+        key2 = extract_prompt_from_messages(c2)
+        self.assertNotEqual(key1, key2, "Different conversational contexts must produce distinct cache queries")
 
 
 class TestSmartRouter(unittest.TestCase):
