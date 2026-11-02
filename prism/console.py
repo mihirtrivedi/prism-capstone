@@ -1225,6 +1225,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                 tBody.innerHTML = tenants.map((t, idx) => {
                     const spend = t.current_spend || 0;
                     const budget = t.monthly_budget_usd || 1;
+                    const budgetDisplay = budget < 0.01 ? `$${budget.toFixed(5)}` : `$${budget.toFixed(2)}`;
                     const pct = Math.min(100, (spend / budget) * 100);
 
                     // High-visibility progress bar width: if spend > 0, ensure at least 6% visible fill
@@ -1245,7 +1246,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                                 </div>
                             </td>
                             <td><span class="key-code" title="${t.virtual_key}">${t.virtual_key}</span></td>
-                            <td style="font-family: var(--font-mono); color: var(--primary); font-weight: 700;">$${budget.toFixed(2)}</td>
+                            <td style="font-family: var(--font-mono); color: var(--primary); font-weight: 700;">${budgetDisplay}</td>
                             <td>
                                 <div style="display: flex; justify-content: space-between; font-weight: 600; font-size: 12px; margin-bottom: 2px;">
                                     <span style="color: var(--success); font-family: var(--font-mono); font-weight: 700;">$${spend.toFixed(6)}</span>
