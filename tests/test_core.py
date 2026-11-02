@@ -11,7 +11,6 @@ from pathlib import Path
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from prism.config import config
 from prism.cost_calculator import calculate_cost
 from prism.rate_limiter import SlidingWindowRateLimiter
 from prism.router import classify_prompt_difficulty, resolve_model

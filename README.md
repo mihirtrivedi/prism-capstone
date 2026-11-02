@@ -61,7 +61,7 @@ The gateway sits in the hot path between applications and upstream model provide
 * Python 3.9+ (Python 3.12 recommended)
 * Installed dependencies:
   ```bash
-  pip install fastapi uvicorn httpx pydantic
+  pip install -r requirements.txt
   ```
 
 ### 2. Start Upstream Providers & Gateway
@@ -116,7 +116,7 @@ python eval_router.py
 ```powershell
 python -m unittest discover tests
 ```
-* **Result:** **12/12 passed (0.003s)** covering token pricing math, sliding-window rate limit isolation, semantic cache paraphrases, near-miss rejection, salt stripping, and alias chain resolution.
+* **Result:** **16/16 passed** covering token pricing math, sliding-window rate limit isolation, TPM enforcement, TOCTOU budget reservation, semantic cache paraphrases, near-miss rejection, salt stripping, multi-turn context isolation, and alias chain resolution.
 
 ---
 
