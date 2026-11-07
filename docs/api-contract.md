@@ -40,7 +40,7 @@ Expected behavior:
 
 - Authenticate the virtual key.
 - Enforce model allowlist, rate limit, and budget — in a documented order.
-- Resolve the alias (`fast`, `smart`) or model name to a provider model.
+- Resolve the alias (`fast`, `smart`) or model name to a provider model. For `auto`, classify the prompt's difficulty first, pick a tier, and record the decision and its reason in the request log.
 - Check the semantic cache; on miss, forward upstream with a timeout and retries.
 - Compute cost from provider-reported usage and the price table.
 - Log the request and return an OpenAI-shaped response.
@@ -146,7 +146,7 @@ The totals here must reconcile with the sum of `x-prism-cost-usd` headers — th
 Expected behavior:
 
 - Return recent request log entries, newest first, filterable by key.
-- Each entry carries the fields listed in `docs/DATA_MODEL.md` (Request Log Entry).
+- Each entry carries the fields listed in `docs/data-model.md` (Request Log Entry).
 
 ### 6. Cache Stats
 
