@@ -1167,7 +1167,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                     await fetchData();
                     break;
                 case 'spend':
-                    showToast("Tenant metered spend recalculated via model_pricing.json");
+                    showToast("Tenant metered spend telemetry refreshed");
                     await fetchData();
                     break;
                 case 'providers':
